@@ -6,11 +6,13 @@ from random import choice
 import torch
 import matplotlib.pyplot as plt
 
-training_data_path = "data_processing/simple_training_data_07"
-training_data_classifications_path = "data_processing/simple_training_classifications_07.csv"
+print(os.getcwd())
 
-validation_data_path = "data_processing/simple_validation_data_07"
-validation_data_classifications_path = "data_processing/simple_validation_classifications_07.csv"
+training_data_path = "../data/simple_training_data_05679"
+training_data_classifications_path = "../data/simple_training_classifications_05679.csv"
+
+validation_data_path = "../data/simple_validation_data_05679"
+validation_data_classifications_path = "../data/simple_validation_classifications_05679.csv"
 
 training_images = os.listdir(training_data_path)
 validation_images = os.listdir(validation_data_path)
