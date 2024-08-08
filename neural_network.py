@@ -68,28 +68,30 @@ with open("../data/log.txt", 'w') as file:
     for epoch in range(num_epochs):
         for batch_start_index in range(0, num_training_images, mini_batch_size):
             print(f"epoch: {epoch} | batch_start_index: {batch_start_index}")
-            mini_batch = []
-            mini_batch_classifications = []
+            
+            mini_batch = torch.empty((0, image_height, image_width), dtype=torch.float32).to(device)
+            mini_batch_classifications = torch.empty((0, num_output_neurons)).to(device)
             for training_image_index in range(batch_start_index, batch_start_index + mini_batch_size):
                 training_image_name = training_images[training_image_index]
                 training_image_path = os.path.join(training_data_path, training_image_name)
+
                 sample_training_image = imread(training_image_path, format="ppm")
-                sample_training_image = sample_training_image[:,:,0]  # Dealing with grayscale images only
+                sample_training_image = sample_training_image[:,:,0]
                 sample_training_image = (sample_training_image / 255).astype('float32')
-                mini_batch.append(torch.from_numpy(sample_training_image))  # Don't mix tensors and lists
-                mini_batch_classifications.append(training_image_classifications[training_image_name])  # Don't mix tensors and lists
+                sample_training_image = torch.from_numpy(sample_training_image).to(device)
+                mini_batch = torch.stack((mini_batch, sample_training_image))
 
-            # Convert the list of 2-D tensors (H, W) into a 3-D tensor (B, H, W)
-            mini_batch = torch.stack(mini_batch).requires_grad_(False).to(device)
+                mini_batch_classification = training_image_classifications[training_image_name]
+                mini_batch_classification = torch.tensor(mini_batch_classification).to(device)
+                mini_batch_classifications = torch.stack((mini_batch_classifications, mini_batch_classification))
 
-            # Convert the 2-D list into a 2-D tensor
-            mini_batch_classifications = torch.tensor(mini_batch_classifications).to(device)
+            mini_batch.requires_grad_(False)
 
             # A 2-dimensional output. Each row is the predicted classification for a particular training image in the mini-batch
-            training_prediction = model(mini_batch).to(device)
+            training_prediction = model(mini_batch)
 
             # Define the quadratic cost function
-            quadratic_cost = (((mini_batch_classifications - training_prediction) ** 2) / (2 * mini_batch_size)).sum().to(device)
+            quadratic_cost = (((mini_batch_classifications - training_prediction) ** 2) / (2 * mini_batch_size)).sum()
             print(f"Quadratic cost: {quadratic_cost}")
 
             # Backpropagation
@@ -106,21 +108,22 @@ with open("../data/log.txt", 'w') as file:
         for validation_image_index in range(num_validation_images):
             validation_image_name = validation_images[validation_image_index]
             validation_image_path = os.path.join(validation_data_path, validation_image_name)
+
             sample_validation_image = imread(validation_image_path, format="ppm")
             sample_validation_image = sample_validation_image[:,:,0]
             sample_validation_image = (sample_validation_image / 255).astype('float32')
-            sample_validation_classification = torch.tensor(validation_image_classifications[validation_image_name]).to(device)
-
-            # We have a batch size of 1 in this case. We want to add an extra dimension 
-            # to the tensor, like this: (H, W) -> (1, H, W) - hence .unsqueeze(0)
+            # We have a batch size of 1 in this case. We want to add an extra dimension to the tensor, 
+            # like this: (H, W) -> (1, H, W) - hence .unsqueeze(0)
             sample_validation_image = torch.from_numpy(sample_validation_image).unsqueeze(0).to(device)
 
+            sample_validation_classification = validation_image_classifications[validation_image_name]
+            sample_validation_classification = torch.tensor(sample_validation_classification).to(device)
+
             # A 2-D tensor with size (1, num_output_neurons)
-            validation_prediction = model(sample_validation_image).to(device)
+            validation_prediction = model(sample_validation_image)
 
             threshold = 0.5 
-
-            difference = torch.abs(sample_validation_classification - validation_prediction).to(device)
+            difference = torch.abs(sample_validation_classification - validation_prediction)
             result = torch.all(difference < threshold).item()  # Returns a bool
             correct += int(result)
 
