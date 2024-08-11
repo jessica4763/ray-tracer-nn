@@ -30,8 +30,8 @@ labels_map = {
     9: "Did not nudge shadow ray.",
 }
 
-num_training_images = len(training_images) 
-num_validation_images = len(validation_images)
+num_training_images = 3000
+num_validation_images = 300
 
 image_height = 225
 image_width = 400
@@ -39,7 +39,7 @@ image_width = 400
 num_input_neurons = image_height * image_width
 num_output_neurons = len(labels_map)
 mini_batch_size = 10
-num_epochs = 10
+num_epochs = 30
 learning_rate = 0.1
 
 class NeuralNetwork(nn.Module):
@@ -47,9 +47,9 @@ class NeuralNetwork(nn.Module):
         super().__init__()
         self.flatten = nn.Flatten()
         self.linear_sigmoid_stack = nn.Sequential(
-            nn.Linear(image_height * image_width, 1000),
-            nn.Sigmoid(),
-            nn.Linear(1000, num_output_neurons),
+            nn.Linear(image_height * image_width, 500),
+            nn.ReLU(),
+            nn.Linear(500, num_output_neurons),
             nn.Sigmoid(),
         )
 
@@ -69,8 +69,8 @@ with open("../data/log.txt", 'w') as file:
         for batch_start_index in range(0, num_training_images, mini_batch_size):
             print(f"epoch: {epoch} | batch_start_index: {batch_start_index}")
             
-            mini_batch = torch.empty((0, image_height, image_width), dtype=torch.float32).to(device)
-            mini_batch_classifications = torch.empty((0, num_output_neurons)).to(device)
+            mini_batch = torch.empty(0, image_height, image_width, dtype=torch.float32).to(device)
+            mini_batch_classifications = torch.empty(0, num_output_neurons).to(device)
             for training_image_index in range(batch_start_index, batch_start_index + mini_batch_size):
                 training_image_name = training_images[training_image_index]
                 training_image_path = os.path.join(training_data_path, training_image_name)
@@ -78,12 +78,12 @@ with open("../data/log.txt", 'w') as file:
                 sample_training_image = imread(training_image_path, format="ppm")
                 sample_training_image = sample_training_image[:,:,0]
                 sample_training_image = (sample_training_image / 255).astype('float32')
-                sample_training_image = torch.from_numpy(sample_training_image).to(device)
-                mini_batch = torch.stack((mini_batch, sample_training_image))
+                sample_training_image = torch.from_numpy(sample_training_image).unsqueeze(0).to(device)
+                mini_batch = torch.cat((mini_batch, sample_training_image), dim=0)
 
                 mini_batch_classification = training_image_classifications[training_image_name]
-                mini_batch_classification = torch.tensor(mini_batch_classification).to(device)
-                mini_batch_classifications = torch.stack((mini_batch_classifications, mini_batch_classification))
+                mini_batch_classification = torch.tensor(mini_batch_classification).unsqueeze(0).to(device)
+                mini_batch_classifications = torch.cat((mini_batch_classifications, mini_batch_classification), dim=0)
 
             mini_batch.requires_grad_(False)
 
