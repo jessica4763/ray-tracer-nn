@@ -6,7 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
+from torchvision import datasets, transforms, models
 from process_data import training_image_names, validation_image_names, training_classifications, validation_classifications, training_data_path, validation_data_path
 
 device = (
@@ -34,20 +34,20 @@ labels_map = {
 num_training_images = 1000
 num_validation_images = 100
 
+num_channels = 3
 image_height = 225
 image_width = 400
 
-network_type = "CNN"
-cost_function = "quadratic"
+network = "VGG-16"
+cost_function = "binary cross-entropy"
 
-num_input_neurons = image_height * image_width
 num_output_neurons = len(labels_map)
 mini_batch_size = 10
-num_epochs = 100
+num_epochs = 1000
 learning_rate = 0.01
 
 regularizer = "L2"
-regularization_parameter = 1 / mini_batch_size
+regularization_parameter = 0.1 / mini_batch_size
 
 
 class NeuralNetwork(nn.Module):
@@ -65,44 +65,11 @@ class NeuralNetwork(nn.Module):
         x = self.flatten(x)
         logits = self.linear_sigmoid_stack(x)
         return logits
-
-
-class ConvolutionalNeuralNetwork(torch.nn.Module):
-    def __init__(self):
-        super(ConvolutionalNeuralNetwork, self).__init__()
-        # 1 input image channel (black & white), 6 output channels, 6 x 6 square convolution kernel
-        # Apply 5 x 5 max-pooling after the convolutional layer
-        self.conv1 = torch.nn.Conv2d(1, 6, 6)
-        # 6 input image channels, 16 output channels, 5 x 5 square convolutional layer
-        # Apply 5 x 5 max-pooling after the convolutional layer
-        self.conv2 = torch.nn.Conv2d(6, 16, 5)
-        # an affine operation: y = Wx + b
-        self.fc1 = torch.nn.Linear(16 * 15 * 8, 120)  # 15 * 8 from resulting image dimension after both convolutional and max-pooling layers
-        self.fc2 = torch.nn.Linear(120, 84)
-        self.fc3 = torch.nn.Linear(84, 10)
-
-    def forward(self, x):
-        # Max pooling over a (5, 5) window
-        x = F.max_pool2d(F.relu(self.conv1(x)), (5, 5))
-        # If the size is a square you can only specify a single number
-        x = F.max_pool2d(F.relu(self.conv2(x)), 5)
-        x = x.view(-1, self.num_flat_features(x))
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
-    
-    def num_flat_features(self, x):
-        size = x.size()[1:]  # all dimensions except the batch dimension
-        num_features = 1
-        for s in size:
-            num_features *= s
-        return num_features
     
 
 # Load images and their classifications into memory 
 def load_images_and_classifications(data_path, image_names, num_images, image_classifications):
-    loaded_images = torch.empty(0, image_height, image_width, dtype=torch.float32).to(device)
+    loaded_images = torch.empty(0, num_channels, image_height, image_width, dtype=torch.float32).to(device)
     loaded_classifications = torch.empty(0, num_output_neurons).to(device)
 
     for image_index in range(num_images):
@@ -110,9 +77,10 @@ def load_images_and_classifications(data_path, image_names, num_images, image_cl
         image_path = os.path.join(data_path, image_name)
 
         sample_image = imread(image_path, format="ppm")
-        sample_image = sample_image[:,:,0]
+        # sample_image = sample_image[:, :, 0]
         sample_image = (sample_image / 255).astype('float32')
         sample_image = torch.from_numpy(sample_image).unsqueeze(0).to(device)
+        sample_image = sample_image.permute(0, 3, 1, 2)
         loaded_images = torch.cat((loaded_images, sample_image), dim=0)
 
         sample_classification = image_classifications[image_name]
@@ -127,9 +95,19 @@ def load_images_and_classifications(data_path, image_names, num_images, image_cl
 
 loaded_training_images, loaded_training_classifications = load_images_and_classifications(training_data_path, training_image_names, num_training_images, training_classifications)
 loaded_validation_images, loaded_validation_classifications = load_images_and_classifications(validation_data_path, validation_image_names, num_validation_images, validation_classifications)
-model = ConvolutionalNeuralNetwork().to(device) if network_type == "CNN" else NeuralNetwork().to(device)
 
-# Define cross-entropy cost function
+if network == "VGG-16":
+    model = models.vgg16(pretrained=True).to(device)
+    new_classifier = nn.Sequential(
+        *list(model.classifier.children())[:6],  # Keep the first 6 layers of the original classifier. Note that the new classifier uses references to the layers of the original classifier. 
+        nn.Linear(model.classifier[6].in_features, num_output_neurons),  # Final output layer
+        nn.Sigmoid()
+    )
+    model.classifier = new_classifier.to(device)
+else:
+    model = NeuralNetwork().to(device)
+
+# Define binary cross-entropy cost function
 binary_cross_entropy_cost = nn.BCELoss()
 
 # Use a basic stochastic gradient descent optimizer
@@ -141,7 +119,7 @@ with open("../data/log.txt", 'w') as file:
         for batch_start_index in range(0, num_training_images, mini_batch_size):
             print(f"epoch: {epoch} | batch_start_index: {batch_start_index}")
             
-            mini_batch = loaded_training_images[batch_start_index:batch_start_index + mini_batch_size, :, :].unsqueeze(1)  # .unsqueeze(1) when using the CNN
+            mini_batch = loaded_training_images[batch_start_index:batch_start_index + mini_batch_size, :, :]
             mini_batch_classifications = loaded_training_classifications[batch_start_index:batch_start_index + mini_batch_size, :]
             mini_batch.requires_grad_(False)
             
@@ -151,7 +129,7 @@ with open("../data/log.txt", 'w') as file:
             # Define the cost function
             if cost_function == "quadratic":
                 cost = (((mini_batch_classifications - training_prediction) ** 2) / (2 * mini_batch_size)).sum()
-            elif cost_function == "binary cross entropy":
+            elif cost_function == "binary cross-entropy":
                 cost = binary_cross_entropy_cost(training_prediction, mini_batch_classifications)
 
             print(f"Cost: {cost}")
@@ -164,19 +142,39 @@ with open("../data/log.txt", 'w') as file:
 
             # Zero the gradients so they don't accumulate 
             optimizer.zero_grad(set_to_none=False)
+
+            # Decrease the learning rate if the validation accuracy doesn't increase for 
         
         # Check the classifier accuracy against the validation data every epoch
         correct = 0
         for validation_image_index in range(num_validation_images):
-            sample_validation_image = loaded_validation_images[validation_image_index, :, :].unsqueeze(0).unsqueeze(0) # .unsqueeze(0).unsqueeze(0) when using the CNN
+            sample_validation_image = loaded_validation_images[validation_image_index, :, :].unsqueeze(0)
             sample_validation_classification = loaded_validation_classifications[validation_image_index, :]
 
             # A 2-D tensor with size (1, num_output_neurons)
-            validation_prediction = model(sample_validation_image)
+            validation_prediction = model(sample_validation_image).squeeze()
+
+            # # The prediction is correct if all predicted labels are within 0.5 of the actual labels 
+            # difference = torch.abs(sample_validation_classification - validation_prediction)
+            # result = torch.all(difference < 0.5).item()  # Returns a bool
+            # correct += int(result)
 
             # The prediction is correct if all predicted labels are within 0.5 of the actual labels 
             difference = torch.abs(sample_validation_classification - validation_prediction)
-            result = torch.all(difference < 0.5).item()  # Returns a bool
+
+            # Create a boolean tensor where each element is True if the difference is less than 0.5
+            labels_correct = difference < 0.5
+
+            # Count the number of True values in the boolean tensor
+            num_labels_correct = torch.sum(labels_correct).item()
+
+            # Determine the total number of elements in the boolean tensor
+            total_labels = labels_correct.numel()
+
+            # Result is True if all or all but one of the elements are True
+            result = (num_labels_correct == total_labels) or (num_labels_correct == (total_labels - 1)) # or (num_labels_correct == (total_labels - 2))
+
+            # result = torch.all(difference < 0.5).item()  # Returns a bool
             correct += int(result)
 
         validation_accuracy = correct / num_validation_images
