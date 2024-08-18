@@ -1,13 +1,17 @@
 from imageio import imread
-import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import os
-import sys
 import torch
 from torch import nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms, models
-from process_data import training_image_names, validation_image_names, training_classifications, validation_classifications, training_data_path, validation_data_path
+from torch.utils.data import DataLoader, Dataset, SubsetRandomSampler
+from torchvision import models
+
+training_data_path = "../data/training_data"
+training_data_classifications_path = "../data/training_classifications.csv"
+
+validation_data_path = "../data/validation_data"
+validation_data_classifications_path = "../data/validation_classifications.csv"
 
 device = (
     "cuda"
@@ -31,20 +35,74 @@ labels_map = {
     9: "Did not nudge shadow ray.",
 }
 
-num_training_images = 1000
-num_validation_images = 100
+
+num_training_images = 10000
+num_validation_images = 1000
 
 num_channels = 3
 image_height = 225
 image_width = 400
 
+
+############################################################################
+################################### DATA ###################################
+############################################################################
+
+
+column_names = ['filename', 'label0', 'label1', 'label2', 'label3', 'label4', 'label5', 'label6', 'label7', 'label8', 'label9']
+
+
+# def get_sampler(dataset, num_samples):
+#     indices = np.random.choice(len(dataset), num_samples, replace=False)
+#     return SubsetRandomSampler(indices)
+
+
+class CustomImageDataset(Dataset):
+    def __init__(self, annotations_file, img_dir):
+        self.img_labels = pd.read_csv(annotations_file, names=column_names)
+        self.img_dir = img_dir
+
+    def __len__(self):
+        return len(self.img_labels)
+
+    def __getitem__(self, idx):
+        img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 0])
+
+        image = imread(img_path, format="ppm")
+        image = (image / 255).astype('float32')
+        image = torch.from_numpy(image).to(device)
+        image = image.permute(2, 0, 1)
+
+        labels = self.img_labels.iloc[idx, 1:].values
+        labels = labels.astype(bool)
+        labels = torch.tensor(labels, dtype=torch.float32).to(device)
+
+        return image, labels
+
+
+training_data = CustomImageDataset(
+    training_data_classifications_path,
+    training_data_path,
+)
+
+validation_data = CustomImageDataset(
+    validation_data_classifications_path,
+    validation_data_path,
+)
+
+
+############################################################################
+############################## NEURAL NETWORK ##############################
+############################################################################
+
+
 network = "VGG-16"
 cost_function = "binary cross-entropy"
 
 num_output_neurons = len(labels_map)
-mini_batch_size = 10
-num_epochs = 1000
-learning_rate = 0.01
+mini_batch_size = 25
+num_epochs = 10000
+learning_rate = 0.005
 
 regularizer = "L2"
 regularization_parameter = 0.1 / mini_batch_size
@@ -57,6 +115,8 @@ class NeuralNetwork(nn.Module):
         self.linear_sigmoid_stack = nn.Sequential(
             nn.Linear(image_height * image_width, 1000),
             nn.Sigmoid(),
+            nn.Linear(1000, 1000),
+            nn.Sigmoid(),
             nn.Linear(1000, num_output_neurons),
             nn.Sigmoid(),
         )
@@ -66,35 +126,6 @@ class NeuralNetwork(nn.Module):
         logits = self.linear_sigmoid_stack(x)
         return logits
     
-
-# Load images and their classifications into memory 
-def load_images_and_classifications(data_path, image_names, num_images, image_classifications):
-    loaded_images = torch.empty(0, num_channels, image_height, image_width, dtype=torch.float32).to(device)
-    loaded_classifications = torch.empty(0, num_output_neurons).to(device)
-
-    for image_index in range(num_images):
-        image_name = image_names[image_index]
-        image_path = os.path.join(data_path, image_name)
-
-        sample_image = imread(image_path, format="ppm")
-        # sample_image = sample_image[:, :, 0]
-        sample_image = (sample_image / 255).astype('float32')
-        sample_image = torch.from_numpy(sample_image).unsqueeze(0).to(device)
-        sample_image = sample_image.permute(0, 3, 1, 2)
-        loaded_images = torch.cat((loaded_images, sample_image), dim=0)
-
-        sample_classification = image_classifications[image_name]
-        sample_classification = torch.tensor(sample_classification).unsqueeze(0).to(device)
-        loaded_classifications = torch.cat((loaded_classifications, sample_classification), dim=0)
-
-        if image_index % 10 == 0:
-            print(f"{image_index} images loaded")
-
-    return loaded_images, loaded_classifications
-
-
-loaded_training_images, loaded_training_classifications = load_images_and_classifications(training_data_path, training_image_names, num_training_images, training_classifications)
-loaded_validation_images, loaded_validation_classifications = load_images_and_classifications(validation_data_path, validation_image_names, num_validation_images, validation_classifications)
 
 if network == "VGG-16":
     model = models.vgg16(pretrained=True).to(device)
@@ -107,21 +138,25 @@ if network == "VGG-16":
 else:
     model = NeuralNetwork().to(device)
 
-# Define binary cross-entropy cost function
 binary_cross_entropy_cost = nn.BCELoss()
 
 # Use a basic stochastic gradient descent optimizer
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=regularization_parameter if regularizer == "L2" else 0)
 
+# To implement a variable learning rate schedule
+lowest_cost_so_far = float('inf')
+batches_since_improvement = 0
+learning_rate_decrease_threshold = 20
+
 with open("../data/log.txt", 'w') as file:
     # Train for some number of epochs
-    for epoch in range(num_epochs):
-        for batch_start_index in range(0, num_training_images, mini_batch_size):
-            print(f"epoch: {epoch} | batch_start_index: {batch_start_index}")
-            
-            mini_batch = loaded_training_images[batch_start_index:batch_start_index + mini_batch_size, :, :]
-            mini_batch_classifications = loaded_training_classifications[batch_start_index:batch_start_index + mini_batch_size, :]
-            mini_batch.requires_grad_(False)
+    for epoch in range(num_epochs): 
+        # sampler = get_sampler(training_data, num_training_images)
+        # training_dataloader = DataLoader(training_data, batch_size=mini_batch_size, sampler=sampler)
+        training_dataloader = DataLoader(training_data, batch_size=mini_batch_size, shuffle=True)
+        mini_batch_number = 0
+        for mini_batch, mini_batch_classifications in training_dataloader:
+            print(f"epoch: {epoch} | mini_batch_number: {mini_batch_number}")
             
             # A 2-dimensional output. Each row is the predicted classification for a particular training image in the mini-batch
             training_prediction = model(mini_batch)
@@ -131,6 +166,22 @@ with open("../data/log.txt", 'w') as file:
                 cost = (((mini_batch_classifications - training_prediction) ** 2) / (2 * mini_batch_size)).sum()
             elif cost_function == "binary cross-entropy":
                 cost = binary_cross_entropy_cost(training_prediction, mini_batch_classifications)
+
+            # Store the lowest cost so far in order to determine, after some number of batches of no improvement, when to decrease the learning rate while training
+            if cost < lowest_cost_so_far:
+                lowest_cost_so_far = cost 
+                batches_since_improvement = 0
+            else:
+                batches_since_improvement += 1
+
+            # Halve the learning rate when our cost hasn't decreased beyond what we've seen so far in some number of mini-batches
+            if batches_since_improvement >= learning_rate_decrease_threshold:
+                learning_rate /= 2
+                for g in optimizer.param_groups:
+                    g["lr"] = learning_rate
+                
+                lowest_cost_so_far = float('inf')
+                batches_since_improvement = 0
 
             print(f"Cost: {cost}")
 
@@ -143,21 +194,19 @@ with open("../data/log.txt", 'w') as file:
             # Zero the gradients so they don't accumulate 
             optimizer.zero_grad(set_to_none=False)
 
-            # Decrease the learning rate if the validation accuracy doesn't increase for 
-        
+            mini_batch_number += 1
+
         # Check the classifier accuracy against the validation data every epoch
+        # sampler = get_sampler(validation_data, num_validation_images)
+        # validation_dataloader = DataLoader(validation_data, batch_size=1, sampler=sampler)
+        validation_dataloader = DataLoader(validation_data, batch_size=1)
         correct = 0
-        for validation_image_index in range(num_validation_images):
-            sample_validation_image = loaded_validation_images[validation_image_index, :, :].unsqueeze(0)
-            sample_validation_classification = loaded_validation_classifications[validation_image_index, :]
-
-            # A 2-D tensor with size (1, num_output_neurons)
+        for sample_validation_image, sample_validation_classification in validation_dataloader:
+            # A 1-D tensor with size (num_output_neurons,)
             validation_prediction = model(sample_validation_image).squeeze()
-
-            # # The prediction is correct if all predicted labels are within 0.5 of the actual labels 
-            # difference = torch.abs(sample_validation_classification - validation_prediction)
-            # result = torch.all(difference < 0.5).item()  # Returns a bool
-            # correct += int(result)
+            
+            # A 1-D tensor with size (num_output_neurons,)
+            sample_validation_classification = sample_validation_classification.squeeze()
 
             # The prediction is correct if all predicted labels are within 0.5 of the actual labels 
             difference = torch.abs(sample_validation_classification - validation_prediction)
