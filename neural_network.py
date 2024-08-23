@@ -7,6 +7,16 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset, SubsetRandomSampler
 from torchvision import models
 
+print(torch.__version__)
+print(torch.backends.cudnn.enabled)
+print(torch.backends.cudnn.version())
+
+# training_data_path = "../data/simple_training_data_05679"
+# training_data_classifications_path = "../data/simple_training_classifications_05679.csv"
+
+# validation_data_path = "../data/simple_validation_data_05679"
+# validation_data_classifications_path = "../data/simple_validation_classifications_05679.csv"
+
 training_data_path = "../data/training_data"
 training_data_classifications_path = "../data/training_classifications.csv"
 
@@ -100,12 +110,14 @@ network = "VGG-16"
 cost_function = "binary cross-entropy"
 
 num_output_neurons = len(labels_map)
-mini_batch_size = 25
-num_epochs = 10000
-learning_rate = 0.005
+effective_batch_size = 50
+actual_batch_size = 25
+accumulation_steps = int(effective_batch_size / actual_batch_size)
+num_epochs = 100
+learning_rate = 0.1
 
 regularizer = "L2"
-regularization_parameter = 0.1 / mini_batch_size
+regularization_parameter = 0.01 / effective_batch_size
 
 
 class NeuralNetwork(nn.Module):
@@ -128,7 +140,7 @@ class NeuralNetwork(nn.Module):
     
 
 if network == "VGG-16":
-    model = models.vgg16(pretrained=True).to(device)
+    model = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1).to(device)
     new_classifier = nn.Sequential(
         *list(model.classifier.children())[:6],  # Keep the first 6 layers of the original classifier. Note that the new classifier uses references to the layers of the original classifier. 
         nn.Linear(model.classifier[6].in_features, num_output_neurons),  # Final output layer
@@ -144,90 +156,114 @@ binary_cross_entropy_cost = nn.BCELoss()
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=regularization_parameter if regularizer == "L2" else 0)
 
 # To implement a variable learning rate schedule
-lowest_cost_so_far = float('inf')
 batches_since_improvement = 0
-learning_rate_decrease_threshold = 20
+learning_rate_decrease_threshold = (num_training_images / effective_batch_size) * 10
+lowest_aggregate_cost_so_far = float('inf')
+aggregate_cost = 0
 
-with open("../data/log.txt", 'w') as file:
-    # Train for some number of epochs
-    for epoch in range(num_epochs): 
-        # sampler = get_sampler(training_data, num_training_images)
-        # training_dataloader = DataLoader(training_data, batch_size=mini_batch_size, sampler=sampler)
-        training_dataloader = DataLoader(training_data, batch_size=mini_batch_size, shuffle=True)
-        mini_batch_number = 0
-        for mini_batch, mini_batch_classifications in training_dataloader:
-            print(f"epoch: {epoch} | mini_batch_number: {mini_batch_number}")
+if __name__ == '__main__':
+    with open("../data/log.txt", 'w') as file:
+        # Ensure we start with a clean slate for gradients
+        optimizer.zero_grad(set_to_none=False)
+
+        # Train for some number of epochs
+        for epoch in range(num_epochs): 
             
-            # A 2-dimensional output. Each row is the predicted classification for a particular training image in the mini-batch
-            training_prediction = model(mini_batch)
 
-            # Define the cost function
-            if cost_function == "quadratic":
-                cost = (((mini_batch_classifications - training_prediction) ** 2) / (2 * mini_batch_size)).sum()
-            elif cost_function == "binary cross-entropy":
-                cost = binary_cross_entropy_cost(training_prediction, mini_batch_classifications)
+            ############################################################################
+            ################################# TRAINING #################################
+            ############################################################################ 
 
-            # Store the lowest cost so far in order to determine, after some number of batches of no improvement, when to decrease the learning rate while training
-            if cost < lowest_cost_so_far:
-                lowest_cost_so_far = cost 
-                batches_since_improvement = 0
-            else:
-                batches_since_improvement += 1
 
-            # Halve the learning rate when our cost hasn't decreased beyond what we've seen so far in some number of mini-batches
-            if batches_since_improvement >= learning_rate_decrease_threshold:
-                learning_rate /= 2
-                for g in optimizer.param_groups:
-                    g["lr"] = learning_rate
+            # sampler = get_sampler(training_data, num_training_images)
+            # training_dataloader = DataLoader(training_data, batch_size=actual_batch_size, sampler=sampler)
+            training_dataloader = DataLoader(training_data, batch_size=actual_batch_size, shuffle=True)
+            mini_batch_number = 0
+            for mini_batch, mini_batch_classifications in training_dataloader:
+                print(f"epoch: {epoch} | mini_batch_number: {mini_batch_number} | learning_rate: {learning_rate} | batches_since_improvement: {batches_since_improvement}")
                 
-                lowest_cost_so_far = float('inf')
-                batches_since_improvement = 0
+                # A 2-dimensional output. Each row is the predicted classification for a particular training image in the mini-batch
+                training_prediction = model(mini_batch)
 
-            print(f"Cost: {cost}")
+                # Define the cost function
+                if cost_function == "quadratic":
+                    cost = (((mini_batch_classifications - training_prediction) ** 2) / (2 * effective_batch_size)).sum()
+                elif cost_function == "binary cross-entropy":
+                    cost = binary_cross_entropy_cost(training_prediction, mini_batch_classifications) / accumulation_steps
+                aggregate_cost += cost
 
-            # Backpropagation
-            cost.backward()
+                # Backpropagation
+                cost.backward()
 
-            # Update weights and biases 
-            optimizer.step()
+                # Implement the effective batch size
+                if (mini_batch_number + 1) % accumulation_steps == 0:
+                    print(f"Aggregate cost: {aggregate_cost}")
+                    file.write(f"epoch: {epoch} | mini_batch_number: {mini_batch_number} | learning_rate: {learning_rate} | batches_since_improvement: {batches_since_improvement} | aggregate_cost: {aggregate_cost}\n")
 
-            # Zero the gradients so they don't accumulate 
-            optimizer.zero_grad(set_to_none=False)
+                    # Store the lowest cost so far in order to determine, after some number of batches of no improvement, when to decrease the learning rate while training
+                    if aggregate_cost < lowest_aggregate_cost_so_far:
+                        lowest_aggregate_cost_so_far = aggregate_cost 
+                        batches_since_improvement = 0
+                    else:
+                        batches_since_improvement += 1
 
-            mini_batch_number += 1
+                    # Halve the learning rate when our aggregate cost hasn't decreased beyond what we've seen so far in some number of mini-batches
+                    if batches_since_improvement >= learning_rate_decrease_threshold:
+                        learning_rate /= 2
+                        for g in optimizer.param_groups:
+                            g["lr"] = learning_rate
+                        
+                        lowest_aggregate_cost_so_far = float('inf')
+                        batches_since_improvement = 0
 
-        # Check the classifier accuracy against the validation data every epoch
-        # sampler = get_sampler(validation_data, num_validation_images)
-        # validation_dataloader = DataLoader(validation_data, batch_size=1, sampler=sampler)
-        validation_dataloader = DataLoader(validation_data, batch_size=1)
-        correct = 0
-        for sample_validation_image, sample_validation_classification in validation_dataloader:
-            # A 1-D tensor with size (num_output_neurons,)
-            validation_prediction = model(sample_validation_image).squeeze()
-            
-            # A 1-D tensor with size (num_output_neurons,)
-            sample_validation_classification = sample_validation_classification.squeeze()
+                    # Update weights and biases 
+                    optimizer.step()
 
-            # The prediction is correct if all predicted labels are within 0.5 of the actual labels 
-            difference = torch.abs(sample_validation_classification - validation_prediction)
+                    # Zero the gradients so they don't accumulate 
+                    optimizer.zero_grad(set_to_none=False)
 
-            # Create a boolean tensor where each element is True if the difference is less than 0.5
-            labels_correct = difference < 0.5
+                    aggregate_cost = 0
+                
+                mini_batch_number += 1
 
-            # Count the number of True values in the boolean tensor
-            num_labels_correct = torch.sum(labels_correct).item()
 
-            # Determine the total number of elements in the boolean tensor
-            total_labels = labels_correct.numel()
+            ############################################################################
+            ################################ VALIDATION ################################
+            ############################################################################ 
 
-            # Result is True if all or all but one of the elements are True
-            result = (num_labels_correct == total_labels) or (num_labels_correct == (total_labels - 1)) # or (num_labels_correct == (total_labels - 2))
 
-            # result = torch.all(difference < 0.5).item()  # Returns a bool
-            correct += int(result)
+            # Check the classifier accuracy against the validation data every epoch
+            # sampler = get_sampler(validation_data, num_validation_images)
+            # validation_dataloader = DataLoader(validation_data, batch_size=1, sampler=sampler)
+            validation_dataloader = DataLoader(validation_data, batch_size=1)
+            correct = 0
+            for sample_validation_image, sample_validation_classification in validation_dataloader:
+                # A 1-D tensor with size (num_output_neurons,)
+                validation_prediction = model(sample_validation_image).squeeze()
+                
+                # A 1-D tensor with size (num_output_neurons,)
+                sample_validation_classification = sample_validation_classification.squeeze()
 
-        validation_accuracy = correct / num_validation_images
-        print(f"Validation accuracy after epoch {epoch}: {validation_accuracy} ")
+                # The prediction is correct if all predicted labels are within 0.5 of the actual labels 
+                difference = torch.abs(sample_validation_classification - validation_prediction)
 
-        file.write(f"{epoch}: {validation_accuracy:.4f} {cost}\n")
-        file.flush()
+                # Create a boolean tensor where each element is True if the difference is less than 0.5
+                labels_correct = difference < 0.5
+
+                # Count the number of True values in the boolean tensor
+                num_labels_correct = torch.sum(labels_correct).item()
+
+                # Determine the total number of elements in the boolean tensor
+                total_labels = labels_correct.numel()
+
+                # Result is True if all or all but one of the elements are True
+                result = (num_labels_correct == total_labels) or (num_labels_correct == (total_labels - 1)) # or (num_labels_correct == (total_labels - 2))
+
+                correct += int(result)
+
+            validation_accuracy = correct / num_validation_images
+            print(f"Validation accuracy after epoch {epoch}: {validation_accuracy} ")
+            file.write(f"Validation accuracy after epoch {epoch}: {validation_accuracy:.4f}\n")
+            file.flush()
+
+            torch.save(model, "model.pth")
