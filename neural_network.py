@@ -32,6 +32,18 @@ device = (
 )
 print(f"Using {device} device")
 
+num_training_images = 10000
+num_validation_images = 1000
+
+num_channels = 3
+image_height = 225
+image_width = 400
+
+
+############################################################################
+################################### DATA ###################################
+############################################################################
+
 labels_map = {
     0: "Did not normalise point to light vector.",
     1: "Did not normalise view vector.",
@@ -46,21 +58,6 @@ labels_map = {
 }
 
 
-num_training_images = 10000
-num_validation_images = 1000
-
-num_channels = 3
-image_height = 225
-image_width = 400
-
-
-############################################################################
-################################### DATA ###################################
-############################################################################
-
-
-column_names = ['filename', 'label0', 'label1', 'label2', 'label3', 'label4', 'label5', 'label6', 'label7', 'label8', 'label9']
-
 
 # def get_sampler(dataset, num_samples):
 #     indices = np.random.choice(len(dataset), num_samples, replace=False)
@@ -69,6 +66,7 @@ column_names = ['filename', 'label0', 'label1', 'label2', 'label3', 'label4', 'l
 
 class CustomImageDataset(Dataset):
     def __init__(self, annotations_file, img_dir):
+        column_names = ['filename', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
         self.img_labels = pd.read_csv(annotations_file, names=column_names)
         self.img_dir = img_dir
 
@@ -110,14 +108,23 @@ network = "VGG-16"
 cost_function = "binary cross-entropy"
 
 num_output_neurons = len(labels_map)
+
+num_epochs = 100
+
+learning_rate = 0.05
+
 effective_batch_size = 50
 actual_batch_size = 25
 accumulation_steps = int(effective_batch_size / actual_batch_size)
-num_epochs = 100
-learning_rate = 0.1
+aggregate_cost = 0
 
 regularizer = "L2"
 regularization_parameter = 0.01 / effective_batch_size
+
+# To implement a variable learning rate schedule
+batches_since_improvement = 0
+learning_rate_decrease_threshold = (num_training_images / effective_batch_size) * 10
+lowest_aggregate_cost_so_far = float('inf')
 
 
 class NeuralNetwork(nn.Module):
@@ -150,16 +157,8 @@ if network == "VGG-16":
 else:
     model = NeuralNetwork().to(device)
 
-binary_cross_entropy_cost = nn.BCELoss()
-
 # Use a basic stochastic gradient descent optimizer
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=regularization_parameter if regularizer == "L2" else 0)
-
-# To implement a variable learning rate schedule
-batches_since_improvement = 0
-learning_rate_decrease_threshold = (num_training_images / effective_batch_size) * 10
-lowest_aggregate_cost_so_far = float('inf')
-aggregate_cost = 0
 
 if __name__ == '__main__':
     with open("../data/log.txt", 'w') as file:
@@ -189,7 +188,8 @@ if __name__ == '__main__':
                 if cost_function == "quadratic":
                     cost = (((mini_batch_classifications - training_prediction) ** 2) / (2 * effective_batch_size)).sum()
                 elif cost_function == "binary cross-entropy":
-                    cost = binary_cross_entropy_cost(training_prediction, mini_batch_classifications) / accumulation_steps
+                    cost = nn.BCELoss()(training_prediction, mini_batch_classifications) / accumulation_steps
+
                 aggregate_cost += cost
 
                 # Backpropagation
@@ -198,6 +198,7 @@ if __name__ == '__main__':
                 # Implement the effective batch size
                 if (mini_batch_number + 1) % accumulation_steps == 0:
                     print(f"Aggregate cost: {aggregate_cost}")
+
                     file.write(f"epoch: {epoch} | mini_batch_number: {mini_batch_number} | learning_rate: {learning_rate} | batches_since_improvement: {batches_since_improvement} | aggregate_cost: {aggregate_cost}\n")
 
                     # Store the lowest cost so far in order to determine, after some number of batches of no improvement, when to decrease the learning rate while training
@@ -213,8 +214,8 @@ if __name__ == '__main__':
                         for g in optimizer.param_groups:
                             g["lr"] = learning_rate
                         
-                        lowest_aggregate_cost_so_far = float('inf')
                         batches_since_improvement = 0
+                        lowest_aggregate_cost_so_far = float('inf')
 
                     # Update weights and biases 
                     optimizer.step()
@@ -262,7 +263,9 @@ if __name__ == '__main__':
                 correct += int(result)
 
             validation_accuracy = correct / num_validation_images
+
             print(f"Validation accuracy after epoch {epoch}: {validation_accuracy} ")
+
             file.write(f"Validation accuracy after epoch {epoch}: {validation_accuracy:.4f}\n")
             file.flush()
 
