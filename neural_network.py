@@ -8,6 +8,16 @@ from torch.utils.data import DataLoader, Dataset, SubsetRandomSampler
 from torchvision import models
 
 
+device = (
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps"
+        if torch.backends.mps.is_available()
+        else "cpu"
+    )
+print(f"Using {device} device")
+
+
 # def get_sampler(dataset, num_samples):
 #     indices = np.random.choice(len(dataset), num_samples, replace=False)
 #     return SubsetRandomSampler(indices)
@@ -57,10 +67,6 @@ class NeuralNetwork(nn.Module):
 
 
 if __name__ == '__main__':
-    print(torch.__version__)
-    print(torch.backends.cudnn.enabled)
-    print(torch.backends.cudnn.version())
-
     device = (
         "cuda"
         if torch.cuda.is_available()
@@ -75,11 +81,11 @@ if __name__ == '__main__':
     ################################### DATA ###################################
     ############################################################################
 
-    training_data_classifications_path = "../data/training_classifications.csv"
-    training_data_path = "../data/training_data"
+    training_data_classifications_path = "../data/training_classifications_1_error_small.csv"
+    training_data_path = "../data/training_data_1_error_small"
 
-    validation_data_classifications_path = "../data/validation_classifications.csv"
-    validation_data_path = "../data/validation_data"
+    validation_data_classifications_path = "../data/validation_classifications_1_error_small.csv"
+    validation_data_path = "../data/validation_data_1_error_small"
 
     num_training_images = len(os.listdir(training_data_path))
     num_validation_images = len(os.listdir(validation_data_path))
@@ -128,8 +134,8 @@ if __name__ == '__main__':
     learning_rate = 0.05
 
     # To implement a larger effective batch size
-    effective_batch_size = 50
-    actual_batch_size = 25
+    effective_batch_size = 10
+    actual_batch_size = 10
     accumulation_steps = int(effective_batch_size / actual_batch_size)
     aggregate_cost = 0
 
