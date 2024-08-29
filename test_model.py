@@ -54,6 +54,6 @@ if __name__ == "__main__":
                         print(f"{i} images done")
             
             for i, result in enumerate(results):
-                file.write(f"{model_name} for {i} of 10 images: {result / num_validation_images:.4f}\n")
+                file.write(f"{model_name} | Proportion of images for which exactly {i} of 10 labels are correct: {result / num_validation_images:.4f}\n")
 
             file.flush()

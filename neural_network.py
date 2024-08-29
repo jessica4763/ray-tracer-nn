@@ -67,19 +67,12 @@ class NeuralNetwork(nn.Module):
 
 
 if __name__ == '__main__':
-    device = (
-        "cuda"
-        if torch.cuda.is_available()
-        else "mps"
-        if torch.backends.mps.is_available()
-        else "cpu"
-    )
-    print(f"Using {device} device")
 
 
     ############################################################################
     ################################### DATA ###################################
     ############################################################################
+
 
     training_data_classifications_path = "../data/training_classifications_1_error_small.csv"
     training_data_path = "../data/training_data_1_error_small"
@@ -242,7 +235,7 @@ if __name__ == '__main__':
             # sampler = get_sampler(validation_data, num_validation_images)
             # validation_dataloader = DataLoader(validation_data, batch_size=1, sampler=sampler)
             validation_dataloader = DataLoader(validation_data, batch_size=1)
-            correct = 0
+            results = [0 for _ in range(11)]
 
             with torch.no_grad():
                 for sample_validation_image, sample_validation_classification in validation_dataloader:
@@ -261,19 +254,15 @@ if __name__ == '__main__':
                     # Count the number of True values in the boolean tensor
                     num_labels_correct = torch.sum(labels_correct).item()
 
-                    # Determine the total number of elements in the boolean tensor
-                    total_labels = labels_correct.numel()
+                    results[num_labels_correct] += 1
 
-                    # Result is True if all or all but one of the elements are True
-                    result = (num_labels_correct == total_labels) or (num_labels_correct == (total_labels - 1)) # or (num_labels_correct == (total_labels - 2))
-
-                    correct += int(result)
-
-            validation_accuracy = correct / num_validation_images
+            validation_accuracy = results[10] / num_validation_images
 
             print(f"Validation accuracy after epoch {epoch}: {validation_accuracy} ")
 
-            file.write(f"Validation accuracy after epoch {epoch}: {validation_accuracy:.4f}\n")
+            for i, result in enumerate(results):
+                file.write(f" Epoch {epoch} | Proportion of images for which exactly {i} of 10 labels are correct: {result / num_validation_images:.4f}\n")
+
             file.flush()
 
             torch.save(model, "model.pth")
