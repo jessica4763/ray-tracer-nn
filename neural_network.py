@@ -4,7 +4,7 @@ import pandas as pd
 import os
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset, SubsetRandomSampler
+from torch.utils.data import DataLoader, Dataset
 from torchvision import models
 
 
@@ -20,7 +20,7 @@ print(f"Using {device} device")
 
 class CustomImageDataset(Dataset):
     def __init__(self, annotations_file, img_dir):
-        column_names = ['filename', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+        column_names = ['filename', '0', '1', '2', '3', '4', '5', '6', '7', '8']
         self.img_labels = pd.read_csv(annotations_file, names=column_names)
         self.img_dir = img_dir
 
