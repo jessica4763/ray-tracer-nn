@@ -44,7 +44,7 @@ class CustomImageDataset(Dataset):
         labels = labels.astype(bool)
         labels = torch.tensor(labels, dtype=torch.float32).to(device)
 
-        return image, labels
+        return image, labels, idx
 
 
 class NeuralNetwork(nn.Module):
@@ -96,7 +96,7 @@ if __name__ == '__main__':
         5: "Did not negate the point to light normalised vector inside reflect.",
         6: "Calculated a light to point vector instead of a point to light vector.",
         7: "Calculated a camera to point vector instead of a point to camera vector.",
-        8: "Did not consider light colour in diffuse calcluation.",
+        8: "Did not consider light colour* and that light intensity decreases with distance in specular calcluation.",
         9: "Did not nudge shadow ray.",
     }
 
@@ -119,41 +119,44 @@ if __name__ == '__main__':
     # Define the neural network to be used
     network = "VGG-16"
 
-    # Define the cost function to be used
-    cost_function = "binary cross-entropy"
+    # Define the loss function to be used
+    loss_function = "binary cross-entropy loss"
 
     num_epochs = 100
 
     learning_rate = 0.05
 
+    # To implement momentum-based gradient descent 
+    momentum_coefficient = 0
+
     # To implement a larger effective batch size
     effective_batch_size = 10
     actual_batch_size = 10
     accumulation_steps = int(effective_batch_size / actual_batch_size)
-    aggregate_cost = 0
-
-    regularizer = "L2"
-    regularization_parameter = 0.01 / effective_batch_size
+    aggregate_training_loss = 0
 
     # To implement a variable learning rate schedule
     batches_since_improvement = 0
     batches_per_epoch = num_training_images / effective_batch_size
     learning_rate_decrease_threshold = batches_per_epoch * 10
-    lowest_aggregate_cost_so_far = float('inf')
+    lowest_aggregate_training_loss_so_far = float('inf')
+
+    regularizer = "L2"
+    regularization_parameter = 0.01 / effective_batch_size
 
     if network == "VGG-16":
         model = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1).to(device)
         new_classifier = nn.Sequential(
-            *list(model.classifier.children())[:6],  # Keep the first 6 layers of the original classifier. Note that the new classifier uses references to the layers of the original classifier. 
+            *list(model.classifier.children())[:6],  # Keep the first 6 layers of the origifnal classifier. Note that the new classifier uses references to the layers of the original classifier. 
             nn.Linear(model.classifier[6].in_features, num_output_neurons),  # Final output layer
-            nn.Sigmoid()
+            nn.LogSoftmax() if loss_function == "softmax with negative log-likelihood loss" else nn.Sigmoid()
         )
         model.classifier = new_classifier.to(device)
     else:
         model = NeuralNetwork().to(device)
 
     # Use a basic stochastic gradient descent optimizer
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=regularization_parameter if regularizer == "L2" else 0)
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=regularization_parameter if regularizer == "L2" else 0, momentum=momentum_coefficient)
 
     # Ensure we start with a clean slate for gradients
     optimizer.zero_grad(set_to_none=False)
@@ -175,44 +178,47 @@ if __name__ == '__main__':
             training_dataloader = DataLoader(training_data, batch_size=actual_batch_size, shuffle=True)
             mini_batch_number = 0
 
-            for mini_batch, mini_batch_classifications in training_dataloader:
+            for mini_batch, mini_batch_classifications, _ in training_dataloader:
                 print(f"epoch: {epoch} | mini_batch_number: {mini_batch_number} | learning_rate: {learning_rate} | batches_since_improvement: {batches_since_improvement}")
                 
                 # A 2-dimensional output. Each row is the predicted classification for a particular training image in the mini-batch
                 training_prediction = model(mini_batch)
 
-                # Define the cost function
-                if cost_function == "quadratic":
-                    cost = (((mini_batch_classifications - training_prediction) ** 2) / (2 * effective_batch_size)).sum()
-                elif cost_function == "binary cross-entropy":
-                    cost = nn.BCELoss()(training_prediction, mini_batch_classifications) / accumulation_steps
+                # Training loss
+                if loss_function == "quadratic loss":
+                    training_loss = (((mini_batch_classifications - training_prediction) ** 2) / (2 * effective_batch_size)).sum()
+                elif loss_function == "binary cross-entropy loss":
+                    training_loss = nn.BCELoss()(training_prediction, mini_batch_classifications) / accumulation_steps
+                elif loss_function == "softmax with negative log-likelihood loss":
+                    mini_batch_classifications = mini_batch_classifications.argmax(dim=1)
+                    training_loss = nn.NLLLoss()(training_prediction, mini_batch_classifications)
 
-                aggregate_cost += cost
+                aggregate_training_loss += training_loss
 
                 # Backpropagation
-                cost.backward()
+                training_loss.backward()
 
                 # Implement the effective batch size
                 if (mini_batch_number + 1) % accumulation_steps == 0:
-                    print(f"Aggregate cost: {aggregate_cost}")
+                    print(f"Aggregate training loss: {aggregate_training_loss}")
 
-                    file.write(f"epoch: {epoch} | mini_batch_number: {mini_batch_number} | learning_rate: {learning_rate} | batches_since_improvement: {batches_since_improvement} | aggregate_cost: {aggregate_cost}\n")
+                    file.write(f"epoch: {epoch} | mini_batch_number: {mini_batch_number} | learning_rate: {learning_rate} | batches_since_improvement: {batches_since_improvement} | aggregate_training_loss: {aggregate_training_loss}\n")
 
-                    # Store the lowest cost so far in order to determine, after some number of batches of no improvement, when to decrease the learning rate while training
-                    if aggregate_cost < lowest_aggregate_cost_so_far:
-                        lowest_aggregate_cost_so_far = aggregate_cost 
+                    # Store the lowest training loss so far in order to determine, after some number of batches of no improvement, when to decrease the learning rate while training
+                    if aggregate_training_loss < lowest_aggregate_training_loss_so_far:
+                        lowest_aggregate_training_loss_so_far = aggregate_training_loss 
                         batches_since_improvement = 0
                     else:
                         batches_since_improvement += 1
 
-                    # Halve the learning rate when our aggregate cost hasn't decreased beyond what we've seen so far in some number of mini-batches
+                    # Halve the learning rate when our aggregate loss hasn't decreased beyond what we've seen so far in some number of mini-batches
                     if batches_since_improvement >= learning_rate_decrease_threshold:
                         learning_rate /= 2
                         for g in optimizer.param_groups:
                             g["lr"] = learning_rate
                         
                         batches_since_improvement = 0
-                        lowest_aggregate_cost_so_far = float('inf')
+                        lowest_aggregate_training_loss_so_far = float('inf')
 
                     # Update weights and biases 
                     optimizer.step()
@@ -220,7 +226,7 @@ if __name__ == '__main__':
                     # Zero the gradients so they don't accumulate 
                     optimizer.zero_grad(set_to_none=False)
 
-                    aggregate_cost = 0
+                    aggregate_training_loss = 0
                 
                 mini_batch_number += 1
 
@@ -235,13 +241,26 @@ if __name__ == '__main__':
             # sampler = get_sampler(validation_data, num_validation_images)
             # validation_dataloader = DataLoader(validation_data, batch_size=1, sampler=sampler)
             validation_dataloader = DataLoader(validation_data, batch_size=1)
+            aggregate_validation_loss = 0
             results = [0 for _ in range(11)]
 
             with torch.no_grad():
-                for sample_validation_image, sample_validation_classification in validation_dataloader:
+                for sample_validation_image, sample_validation_classification, _ in validation_dataloader:
                     # A 1-D tensor with size (num_output_neurons,)
                     validation_prediction = model(sample_validation_image).squeeze()
-                    
+                    sample_validation_classification = sample_validation_classification.squeeze()
+
+                    # Validation loss for reporting (using the same loss function as for training loss)
+                    if loss_function == "quadratic loss":
+                        validation_loss = (((sample_validation_classification - validation_prediction) ** 2) / 2).sum()
+                    elif loss_function == "binary cross-entropy loss":
+                        validation_loss = nn.BCELoss()(validation_prediction, sample_validation_classification)
+                    elif loss_function == "softmax with negative log-likelihood loss":
+                        sample_validation_classification = sample_validation_classification.unsqueeze(0).argmax()
+                        validation_loss = nn.NLLLoss()(validation_prediction, sample_validation_classification)
+
+                    aggregate_validation_loss += validation_loss
+
                     # A 1-D tensor with size (num_output_neurons,)
                     sample_validation_classification = sample_validation_classification.squeeze()
 
@@ -256,13 +275,12 @@ if __name__ == '__main__':
 
                     results[num_labels_correct] += 1
 
-            validation_accuracy = results[10] / num_validation_images
-
-            print(f"Validation accuracy after epoch {epoch}: {validation_accuracy} ")
-
             for i, result in enumerate(results):
                 file.write(f" Epoch {epoch} | Proportion of images for which exactly {i} of 10 labels are correct: {result / num_validation_images:.4f}\n")
 
+            average_validation_loss = aggregate_validation_loss / num_validation_images
+            file.write(f"Validation loss after epoch {epoch}: {average_validation_loss}\n")
+
             file.flush()
 
-            torch.save(model, "model.pth")
+            torch.save(model, f"model{epoch}.pth")
