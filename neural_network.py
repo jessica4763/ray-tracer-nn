@@ -18,11 +18,6 @@ device = (
 print(f"Using {device} device")
 
 
-# def get_sampler(dataset, num_samples):
-#     indices = np.random.choice(len(dataset), num_samples, replace=False)
-#     return SubsetRandomSampler(indices)
-
-
 class CustomImageDataset(Dataset):
     def __init__(self, annotations_file, img_dir):
         column_names = ['filename', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
@@ -56,7 +51,7 @@ class NeuralNetwork(nn.Module):
             nn.Sigmoid(),
             nn.Linear(1000, 1000),
             nn.Sigmoid(),
-            nn.Linear(1000, num_output_neurons),
+            nn.Linear(1000, num_labels),
             nn.Sigmoid(),
         )
 
@@ -74,11 +69,11 @@ if __name__ == '__main__':
     ############################################################################
 
 
-    training_data_classifications_path = "../data/training_classifications_1_error_small.csv"
-    training_data_path = "../data/training_data_1_error_small"
+    training_data_classifications_path = "../data/training_classifications_1_error_small_grouping_5_and_7.csv"
+    training_data_path = "../data/training_data_1_error_small_grouping_5_and_7"
 
-    validation_data_classifications_path = "../data/validation_classifications_1_error_small.csv"
-    validation_data_path = "../data/validation_data_1_error_small"
+    validation_data_classifications_path = "../data/validation_classifications_1_error_small_grouping_5_and_7.csv"
+    validation_data_path = "../data/validation_data_1_error_small_grouping_5_and_7"
 
     num_training_images = len(os.listdir(training_data_path))
     num_validation_images = len(os.listdir(validation_data_path))
@@ -87,7 +82,7 @@ if __name__ == '__main__':
     image_height = 225
     image_width = 400
 
-    labels_map = {
+    labels_map_no_grouping = {
         0: "Did not normalise point to light vector.",
         1: "Did not normalise view vector.",
         2: "Did not apply the max function in the diffuse calculation.",
@@ -96,8 +91,20 @@ if __name__ == '__main__':
         5: "Did not negate the point to light normalised vector inside reflect.",
         6: "Calculated a light to point vector instead of a point to light vector.",
         7: "Calculated a camera to point vector instead of a point to camera vector.",
-        8: "Did not consider light colour* and that light intensity decreases with distance in specular calcluation.",
+        8: "Did not consider light intensity decreases with distance to light in specular calcluation.",
         9: "Did not nudge shadow ray.",
+    }
+
+    labels_map_grouping_5_and_7 = {
+        0: "Did not normalise point to light vector.",
+        1: "Did not normalise view vector.",
+        2: "Did not apply the max function in the diffuse calculation.",
+        3: "Did not apply the max function in the specular calculation.",
+        4: "Applied the pow function inside the max function.",
+        5: "Did not negate the point to light normalised vector inside reflect OR calculated a camera to point vector instead of a point to camera vector.",
+        6: "Calculated a light to point vector instead of a point to light vector.",
+        7: "Did not consider light intensity decreases with distance to light in specular calcluation.",
+        8: "Did not nudge shadow ray.",
     }
 
     training_data = CustomImageDataset(
@@ -110,17 +117,21 @@ if __name__ == '__main__':
         validation_data_path,
     )
 
+
     ############################################################################
     ############################## NEURAL NETWORK ##############################
     ############################################################################
 
-    num_output_neurons = len(labels_map)
 
     # Define the neural network to be used
     network = "VGG-16"
 
     # Define the loss function to be used
     loss_function = "binary cross-entropy loss"
+
+    # Define the number of output neurons, which depends on the way the data is labelled
+    labels_map = labels_map_grouping_5_and_7
+    num_labels = len(labels_map)
 
     num_epochs = 100
 
@@ -148,7 +159,7 @@ if __name__ == '__main__':
         model = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1).to(device)
         new_classifier = nn.Sequential(
             *list(model.classifier.children())[:6],  # Keep the first 6 layers of the origifnal classifier. Note that the new classifier uses references to the layers of the original classifier. 
-            nn.Linear(model.classifier[6].in_features, num_output_neurons),  # Final output layer
+            nn.Linear(model.classifier[6].in_features, num_labels),  # Final output layer
             nn.LogSoftmax() if loss_function == "softmax with negative log-likelihood loss" else nn.Sigmoid()
         )
         model.classifier = new_classifier.to(device)
@@ -156,10 +167,11 @@ if __name__ == '__main__':
         model = NeuralNetwork().to(device)
 
     # Use a basic stochastic gradient descent optimizer
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=regularization_parameter if regularizer == "L2" else 0, momentum=momentum_coefficient)
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum_coefficient, weight_decay=regularization_parameter if regularizer == "L2" else 0)
 
     # Ensure we start with a clean slate for gradients
     optimizer.zero_grad(set_to_none=False)
+
 
     with open("../data/log.txt", 'w') as file:
         # Train for some number of epochs
@@ -173,8 +185,6 @@ if __name__ == '__main__':
 
             model.train()
 
-            # sampler = get_sampler(training_data, num_training_images)
-            # training_dataloader = DataLoader(training_data, batch_size=actual_batch_size, sampler=sampler)
             training_dataloader = DataLoader(training_data, batch_size=actual_batch_size, shuffle=True)
             mini_batch_number = 0
 
@@ -238,15 +248,13 @@ if __name__ == '__main__':
 
             model.eval()
 
-            # sampler = get_sampler(validation_data, num_validation_images)
-            # validation_dataloader = DataLoader(validation_data, batch_size=1, sampler=sampler)
             validation_dataloader = DataLoader(validation_data, batch_size=1)
-            aggregate_validation_loss = 0
             results = [0 for _ in range(11)]
+            aggregate_validation_loss = 0
 
             with torch.no_grad():
                 for sample_validation_image, sample_validation_classification, _ in validation_dataloader:
-                    # A 1-D tensor with size (num_output_neurons,)
+                    # A 1-D tensor with size (num_labels,)
                     validation_prediction = model(sample_validation_image).squeeze()
                     sample_validation_classification = sample_validation_classification.squeeze()
 
@@ -261,7 +269,7 @@ if __name__ == '__main__':
 
                     aggregate_validation_loss += validation_loss
 
-                    # A 1-D tensor with size (num_output_neurons,)
+                    # A 1-D tensor with size (num_labels,)
                     sample_validation_classification = sample_validation_classification.squeeze()
 
                     # The prediction is correct if all predicted labels are within 0.5 of the actual labels 
@@ -276,7 +284,7 @@ if __name__ == '__main__':
                     results[num_labels_correct] += 1
 
             for i, result in enumerate(results):
-                file.write(f" Epoch {epoch} | Proportion of images for which exactly {i} of 10 labels are correct: {result / num_validation_images:.4f}\n")
+                file.write(f" Epoch {epoch} | Proportion of images for which exactly {i} of {num_labels} labels are correct: {result / num_validation_images:.4f}\n")
 
             average_validation_loss = aggregate_validation_loss / num_validation_images
             file.write(f"Validation loss after epoch {epoch}: {average_validation_loss}\n")
