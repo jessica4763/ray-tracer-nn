@@ -111,6 +111,6 @@ if __name__ == "__main__":
                 precision = calculate_precision(confusion_matrix)
                 recall = calculate_recall(confusion_matrix)
                 validation_accuracies_file.write(f"{model_path} | PRECISION of label {label}: {precision} | RECALL of label {label}: {recall}\n")
-                validation_accuracies_file.write(f"{model_path} | CONFUSION MATRIX of label {label}: {confusion_matrix}\n")
+                validation_accuracies_file.write(f"{model_path} | CONFUSION MATRIX of label {label}: {confusion_matrix}\n\n")
 
             validation_accuracies_file.flush()
