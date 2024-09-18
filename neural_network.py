@@ -20,7 +20,7 @@ print(f"Using {device} device")
 
 class CustomImageDataset(Dataset):
     def __init__(self, annotations_file, img_dir):
-        column_names = ['filename', '0', '1', '2', '3', '4', '5', '6', '7', '8']
+        column_names = ['filename', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
         self.img_labels = pd.read_csv(annotations_file, names=column_names)
         self.img_dir = img_dir
 
@@ -69,11 +69,11 @@ if __name__ == '__main__':
     ############################################################################
 
 
-    training_data_classifications_path = "../data/training_classifications_1_error_small_grouping_5_and_7.csv"
-    training_data_path = "../data/training_data_1_error_small_grouping_5_and_7"
+    training_data_classifications_path = "../data/training_classifications_1_error_small_ellipses_grouping_5_and_7_no_ground_plane.csv"
+    training_data_path = "../data/training_data_1_error_small_ellipses_grouping_5_and_7_no_ground_plane"
 
-    validation_data_classifications_path = "../data/validation_classifications_1_error_small_grouping_5_and_7.csv"
-    validation_data_path = "../data/validation_data_1_error_small_grouping_5_and_7"
+    validation_data_classifications_path = "../data/validation_classifications_1_error_small_ellipses_grouping_5_and_7_no_ground_plane.csv"
+    validation_data_path = "../data/validation_data_1_error_small_ellipses_grouping_5_and_7_no_ground_plane"
 
     num_training_images = len(os.listdir(training_data_path))
     num_validation_images = len(os.listdir(validation_data_path))
@@ -93,6 +93,7 @@ if __name__ == '__main__':
         7: "Calculated a camera to point vector instead of a point to camera vector.",
         8: "Did not consider light intensity decreases with distance to light in specular calcluation.",
         9: "Did not nudge shadow ray.",
+        10: "Did not normalise normal."
     }
 
     labels_map_grouping_5_and_7 = {
@@ -105,6 +106,7 @@ if __name__ == '__main__':
         6: "Calculated a light to point vector instead of a point to light vector.",
         7: "Did not consider light intensity decreases with distance to light in specular calcluation.",
         8: "Did not nudge shadow ray.",
+        9: "Did not normalise normal."
     }
 
     training_data = CustomImageDataset(

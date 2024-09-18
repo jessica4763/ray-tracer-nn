@@ -19,8 +19,8 @@ def calculate_recall(confusion_matrix):
 
 
 if __name__ == "__main__":
-    validation_data_classifications_path = "../data/validation_classifications_1_error_grouping_5_and_7.csv"
-    validation_data_path = "../data/validation_data_1_error_grouping_5_and_7"
+    validation_data_classifications_path = "../data/validation_classifications_1_error_small_ellipses_grouping_5_and_7_no_ground_plane.csv"
+    validation_data_path = "../data/validation_data_1_error_small_ellipses_grouping_5_and_7_no_ground_plane"
     num_validation_images = len(os.listdir(validation_data_path))
     validation_data = CustomImageDataset(
         validation_data_classifications_path,
@@ -29,10 +29,10 @@ if __name__ == "__main__":
 
     padding = len(str(num_validation_images))
     model_paths = ["model-log15/model8.pth"]
-    num_labels = 9
+    num_labels = 10
 
     with open("../data/validation_accuracies.txt", 'w') as validation_accuracies_file, open("../data/incorrectly_classified_images.txt", 'w') as incorrectly_classified_images_file:
-        incorrectly_classified_images_file.write(f"{''.rjust(padding)} | 0 1 2 3 4 5 6 7 8\n")
+        incorrectly_classified_images_file.write(f"{''.rjust(padding)} | 0 1 2 3 4 5 6 7 8 9\n")
         for model_path in model_paths:
             model = torch.load(model_path)
             model.eval()
