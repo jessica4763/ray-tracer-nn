@@ -9,18 +9,18 @@ from torchvision import models
 
 
 device = (
-        "cuda"
-        if torch.cuda.is_available()
-        else "mps"
-        if torch.backends.mps.is_available()
-        else "cpu"
-    )
+    "cuda"
+    if torch.cuda.is_available()
+    else "mps"
+    if torch.backends.mps.is_available()
+    else "cpu"
+)
 print(f"Using {device} device")
 
 
 class CustomImageDataset(Dataset):
-    def __init__(self, annotations_file, img_dir):
-        column_names = ['filename', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+    def __init__(self, annotations_file, img_dir, num_labels):
+        column_names = ['filename'] + [str(i) for i in range(num_labels)]
         self.img_labels = pd.read_csv(annotations_file, names=column_names)
         self.img_dir = img_dir
 
@@ -109,23 +109,13 @@ if __name__ == '__main__':
         9: "Did not normalise normal."
     }
 
-    training_data = CustomImageDataset(
-        training_data_classifications_path,
-        training_data_path,
-    )
-
-    validation_data = CustomImageDataset(
-        validation_data_classifications_path,
-        validation_data_path,
-    )
-
 
     ############################################################################
     ############################## NEURAL NETWORK ##############################
     ############################################################################
 
 
-    # Define the neural network to be used
+    # Define the architecture to be used
     network = "VGG-16"
 
     # Define the loss function to be used
@@ -157,6 +147,20 @@ if __name__ == '__main__':
     regularizer = "L2"
     regularization_parameter = 0.01 / effective_batch_size
 
+    # The data
+    training_data = CustomImageDataset(
+        training_data_classifications_path,
+        training_data_path,
+        num_labels
+    )
+
+    validation_data = CustomImageDataset(
+        validation_data_classifications_path,
+        validation_data_path,
+        num_labels
+    )
+
+    # The model
     if network == "VGG-16":
         model = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1).to(device)
         new_classifier = nn.Sequential(
@@ -176,7 +180,6 @@ if __name__ == '__main__':
 
 
     with open("../data/log.txt", 'w') as file:
-        # Train for some number of epochs
         for epoch in range(num_epochs): 
             
 
@@ -196,7 +199,7 @@ if __name__ == '__main__':
                 # A 2-dimensional output. Each row is the predicted classification for a particular training image in the mini-batch
                 training_prediction = model(mini_batch)
 
-                # Training loss
+                # Define training loss function
                 if loss_function == "quadratic loss":
                     training_loss = (((mini_batch_classifications - training_prediction) ** 2) / (2 * effective_batch_size)).sum()
                 elif loss_function == "binary cross-entropy loss":
@@ -251,7 +254,7 @@ if __name__ == '__main__':
             model.eval()
 
             validation_dataloader = DataLoader(validation_data, batch_size=1)
-            results = [0 for _ in range(11)]
+            results = [0 for _ in range(num_labels)]
             aggregate_validation_loss = 0
 
             with torch.no_grad():
@@ -260,7 +263,7 @@ if __name__ == '__main__':
                     validation_prediction = model(sample_validation_image).squeeze()
                     sample_validation_classification = sample_validation_classification.squeeze()
 
-                    # Validation loss for reporting (using the same loss function as for training loss)
+                    # Define validation loss function for reporting (using the same loss function as for training loss)
                     if loss_function == "quadratic loss":
                         validation_loss = (((sample_validation_classification - validation_prediction) ** 2) / 2).sum()
                     elif loss_function == "binary cross-entropy loss":

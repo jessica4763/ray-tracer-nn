@@ -19,17 +19,20 @@ def calculate_recall(confusion_matrix):
 
 
 if __name__ == "__main__":
-    validation_data_classifications_path = "../data/validation_classifications_1_error_small_ellipses_grouping_5_and_7_no_ground_plane.csv"
-    validation_data_path = "../data/validation_data_1_error_small_ellipses_grouping_5_and_7_no_ground_plane"
+    validation_data_classifications_path = "../data/validation_classifications_1_error_small_grouping_5_and_7.csv"
+    validation_data_path = "../data/validation_data_1_error_small_grouping_5_and_7"
     num_validation_images = len(os.listdir(validation_data_path))
-    validation_data = CustomImageDataset(
-        validation_data_classifications_path,
-        validation_data_path,
-    )
 
     padding = len(str(num_validation_images))
     model_paths = ["model-log15/model8.pth"]
-    num_labels = 10
+    num_labels = 9
+
+    # The data
+    validation_data = CustomImageDataset(
+        validation_data_classifications_path,
+        validation_data_path,
+        num_labels
+    )
 
     with open("../data/validation_accuracies.txt", 'w') as validation_accuracies_file, open("../data/incorrectly_classified_images.txt", 'w') as incorrectly_classified_images_file:
         incorrectly_classified_images_file.write(f"{''.rjust(padding)} | 0 1 2 3 4 5 6 7 8 9\n")
@@ -37,8 +40,6 @@ if __name__ == "__main__":
             model = torch.load(model_path)
             model.eval()
 
-            # sampler = get_sampler(validation_data, num_validation_images)
-            # validation_dataloader = DataLoader(validation_data, batch_size=1, sampler=sampler)
             validation_dataloader = DataLoader(validation_data, batch_size=1)
 
             results = [0 for _ in range(num_labels + 1)]
@@ -50,17 +51,16 @@ if __name__ == "__main__":
                  [0, 0]] for _ in range(num_labels)
             ]
 
-            images_done = 0
-
+            images_processed = 0
             with torch.no_grad():
                 for sample_validation_image, sample_validation_classification, image_index in validation_dataloader:
                     # A 1-D tensor with size (num_output_neurons,)
                     validation_prediction = model(sample_validation_image).squeeze()
-                    
+
                     # A 1-D tensor with size (num_output_neurons,)
                     sample_validation_classification = sample_validation_classification.squeeze()
 
-                    # The absolute difference of the predicted labels from the actual labels actual labels 
+                    # The absolute difference of the predicted labels from the actual labels 
                     difference = torch.abs(sample_validation_classification - validation_prediction)
 
                     # Create a boolean tensor where each element is True if the difference is less than 0.5
@@ -100,9 +100,9 @@ if __name__ == "__main__":
                             else:
                                 confusion_matrix_list[label][0][0] += 1
 
-                    images_done += 1
-                    if images_done % 100 == 0:
-                        print(f"{images_done} images done")
+                    images_processed += 1
+                    if images_processed % 100 == 0:
+                        print(f"{images_processed} images processed")
             
             for i, result in enumerate(results):
                 validation_accuracies_file.write(f"{model_path} | Proportion of images for which exactly {i} of {num_labels} labels are correct: {result / num_validation_images:.4f}\n")
@@ -110,7 +110,8 @@ if __name__ == "__main__":
             for label, confusion_matrix in enumerate(confusion_matrix_list):
                 precision = calculate_precision(confusion_matrix)
                 recall = calculate_recall(confusion_matrix)
-                validation_accuracies_file.write(f"{model_path} | PRECISION of label {label}: {precision} | RECALL of label {label}: {recall}\n")
+                validation_accuracies_file.write(f"{model_path} |        PRECISION of label {label}: {precision}\n")
+                validation_accuracies_file.write(f"{model_path} |           RECALL of label {label}: {recall}\n")
                 validation_accuracies_file.write(f"{model_path} | CONFUSION MATRIX of label {label}: {confusion_matrix}\n\n")
 
             validation_accuracies_file.flush()
